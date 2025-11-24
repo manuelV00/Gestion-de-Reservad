@@ -1,0 +1,165 @@
+DOCUMENTACIÓN DEL PROYECTO SIRESE
+=================================
+
+1. ENTREGA FINAL DEL PROYECTO DE DESARROLLO
+------------------------------------------
+
+a) Funcionalidades especificadas en la entrega del 1er parcial
+
+El proyecto implementa un sistema web de reservas para restaurante y eventos (SIRESE) con base de datos MySQL y arquitectura MVC sencilla en PHP. Las funcionalidades clave son:
+
+- Registro de usuarios:
+  * Registro de clientes desde la interfaz web (nombre completo, correo, teléfono, contraseña).
+  * Contraseñas almacenadas con hash seguro (password_hash).
+  * Los clientes se registran con rol CLIENTE (rol_id = 3) y se pueden promover manualmente a ADMIN o RECEPCIONISTA desde la base de datos.
+
+- Autenticación e inicio de sesión:
+  * Formulario de login con correo y contraseña.
+  * Validación de credenciales contra la tabla usuarios.
+  * Manejo de sesión para mantener al usuario autenticado.
+  * Opción “Recuérdame” que guarda el email en una cookie segura.
+
+- Roles de usuario:
+  * ADMIN (rol_id = 1).
+  * RECEPCIONISTA (rol_id = 2).
+  * CLIENTE (rol_id = 3).
+  Los ADMIN y RECEPCIONISTAS pueden crear reservas a nombre de otros clientes; los CLIENTES solo crean reservas para ellos mismos.
+
+- Gestión de reservas:
+  * Creación de reservas distinguiendo entre:
+    - EVENTO: eventos como 15 años, matrimonios, grados, reuniones de empresarias, reuniones corporativas u otros.
+    - RESTAURANTE: reservas para consumo de platos a la carta.
+  * Para EVENTO se selecciona el tipo de evento desde la tabla tipos_evento.
+  * Para RESTAURANTE se selecciona el plato desde la tabla platos (montañera, sancocho de gallina, lomo de res, lomo de cerdo, churrasco con término, costilla ahumada, costilla BBQ, filete de pechuga, tilapia).
+  * Campo “especificaciones_cliente” para que el cliente o el administrador escriban requerimientos adicionales (decoración, cambios en el menú, observaciones especiales, etc.).
+  * Campos obligatorios en cada reserva: tipo de reserva, fecha, hora, número de personas, y cliente asociado.
+  * Registro de quién crea la reserva (campo creado_por_id), permitiendo distinguir si la hizo el propio cliente o un usuario administrador/recepcionista.
+
+- Reglas de negocio:
+  * Para reservas de tipo RESTAURANTE:
+    - Solo se permiten en sábados, domingos o días marcados como festivos en la tabla dias_festivos.
+  * Para reservas de tipo EVENTO:
+    - Es obligatorio seleccionar un tipo de evento.
+  * Validaciones básicas de campos obligatorios.
+
+- Listado de reservas:
+  * Vista que muestra todas las reservas con información básica: ID, tipo (EVENTO/RESTAURANTE), nombre del cliente, fecha, hora, número de personas y estado.
+  * La lista se carga usando carga diferida (lazy loading) con Intersection Observer (ver sección 2.b).
+
+
+b) Documento final con diagramas de despliegue y componentes
+
+El proyecto contempla un documento adicional (por ejemplo en formato PDF o Word) que debe incluir, al menos, los siguientes diagramas:
+
+- Diagrama de despliegue:
+  * Nodos principales:
+    - Navegador del usuario (cliente web).
+    - Contenedor Docker de la aplicación (Apache + PHP).
+    - Contenedor Docker de la base de datos (MySQL).
+  * Conexiones:
+    - Navegador → HTTP → contenedor app (puerto 8080).
+    - Contenedor app → conexión PDO → contenedor MySQL (puerto 3306 en la red interna de Docker).
+
+- Diagrama de componentes:
+  * Componentes lógicos:
+    - Componente de Autenticación (AuthController, vistas de login y registro, modelo Usuario).
+    - Componente de Gestión de Reservas (ReservaController, vistas de creación y lista, tablas reservas, tipos_evento, platos, dias_festivos).
+    - Componente de Persistencia (configuración PDO en app/config/config.php).
+    - Componente de Seguridad (tokens CSRF, sanitización de salida con htmlspecialchars).
+    - Componente de Optimización (script JS lazy.js que implementa IntersectionObserver para carga diferida).
+
+
+2. SESIONES, SEGURIDAD Y OPTIMIZACIÓN
+-------------------------------------
+
+a) Gestión de sesiones y cookies
+
+- Sesiones:
+  * Se utiliza session_start() en los controladores para gestionar sesiones PHP.
+  * Se guardan en la sesión los datos mínimos del usuario autenticado:
+    - user_id
+    - user_nombre
+    - user_rol
+  * Estas variables permiten controlar el acceso a las funcionalidades (por ejemplo, solo usuarios logueados pueden crear o ver reservas; solo ADMIN/RECEPCIONISTA ven el selector de clientes).
+
+- Cookies:
+  * Se implementa una cookie “remember_email” cuando el usuario marca la opción “Recuérdame” al iniciar sesión.
+  * Esta cookie almacena el correo y se configura con bandera HttpOnly, lo que disminuye el riesgo de acceso via JavaScript.
+  * La cookie se borra al cerrar sesión.
+
+
+b) Optimización y rendimiento
+
+La optimización implementada en este proyecto se basa en **lazy loading** utilizando la **Intersection Observer API**:
+
+- Carga diferida (lazy loading) de la tabla de reservas:
+  * En la vista de listado de reservas se define una sección vacía con id="reservas-section".
+  * El script public/js/lazy.js crea un IntersectionObserver que vigila esa sección.
+  * Cuando el usuario hace scroll y la sección entra en el viewport, se dispara una petición fetch a la ruta “/?route=reserva_lista_parcial”.
+  * El servidor devuelve solo el HTML de la tabla con las reservas, que es insertado dinámicamente en la sección.
+  * De esta forma, la página inicial carga más rápido y solo se traen los datos de reservas cuando realmente el usuario los necesita.
+
+Este mecanismo cumple el requisito de:
+- Optimización / rendimiento.
+- Uso de **Intersection Observer API** para **lazy loading**.
+
+
+c) Seguridad web
+
+El proyecto incluye dos mecanismos principales de seguridad web:
+
+1. Prevención de CSRF (Cross-Site Request Forgery):
+
+   - En el formulario de creación de reservas se genera un token aleatorio con random_bytes(32), que se almacena en $_SESSION['csrf_token'].
+   - El token se envía en un campo oculto del formulario (input hidden).
+   - En el método ReservaController::guardar() se compara el token recibido desde el formulario con el token almacenado en sesión.
+   - Si los tokens no coinciden, la operación se detiene y se muestra un mensaje de error.
+   - Esto evita que un sitio externo pueda simular un POST válido hacia la aplicación sin el consentimiento del usuario autenticado.
+
+2. Prevención de XSS (Cross-Site Scripting):
+
+   - Cada vez que se muestran datos que vienen de la base de datos o del usuario (por ejemplo, nombre del cliente, especificaciones del cliente, estado de la reserva), se aplica la función:
+     htmlspecialchars($variable, ENT_QUOTES, 'UTF-8').
+   - Esto transforma caracteres especiales (<, >, ", ') en entidades HTML seguras, impidiendo que se interpreten como código JavaScript o HTML inyectado.
+   - Esta protección se usa en las vistas principales, especialmente en las que listan reservas y en los mensajes mostrados al usuario.
+
+
+3. DESPLIEGUE CON DOCKER COMPOSE
+--------------------------------
+
+El proyecto está preparado para su despliegue con Docker Compose, replicando la estructura del taller de la semana 14.
+
+- Archivo docker-compose.yml:
+  * Define dos servicios principales:
+    1) app:
+       - Imagen construida a partir de docker/Dockerfile.
+       - Utiliza PHP 8.2 y Apache.
+       - Expone el puerto 8080 del host hacia el puerto 80 del contenedor (http://localhost:8080).
+       - Monta los directorios ./public y ./app dentro del contenedor para servir el código de la aplicación.
+       - Depende del servicio db.
+    2) db:
+       - Imagen oficial mysql:8.0.
+       - Configura la contraseña root mediante la variable de entorno MYSQL_ROOT_PASSWORD.
+       - Crea automáticamente la base de datos sirese mediante MYSQL_DATABASE.
+       - Expone el puerto 3307 del host hacia el puerto 3306 del contenedor.
+       - Usa el volumen db_data para persistir la información de la base de datos.
+
+- Dockerfile (carpeta docker/):
+  * Parte de la imagen base php:8.2-apache.
+  * Instala las extensiones pdo y pdo_mysql necesarias para conectarse a MySQL.
+  * Habilita el módulo rewrite de Apache (útil para rutas amigables si se desea extender el proyecto).
+  * Copia la configuración de Apache (apache.conf) para establecer el DocumentRoot y permitir AllowOverride.
+
+- Flujo de despliegue:
+  1) Desde la carpeta del proyecto se ejecuta:
+     docker-compose up -d --build
+  2) Esto levanta los contenedores sirese_app (aplicación) y sirese_db (base de datos).
+  3) La aplicación queda disponible en:
+     http://localhost:8080
+  4) La base de datos MySQL se puede administrar desde MySQL Workbench conectándose a 127.0.0.1:3307 con usuario root y contraseña rootpassword.
+  5) El script db/schema.sql se usa para crear las tablas y datos iniciales en la base de datos sirese.
+
+Con todo lo anterior, el proyecto cumple:
+- La entrega final con funcionalidades de registro, login, manejo de roles y gestión de reservas diferenciando entre eventos y restaurante.
+- Los requisitos de sesiones, seguridad (CSRF y XSS) y optimización mediante lazy loading con Intersection Observer.
+- El despliegue mediante Docker Compose, con contenedores separados para la aplicación y la base de datos, tal como se solicitó.
